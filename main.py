@@ -1,62 +1,69 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import streamlit as st
 import pandas as pd
+from datetime import datetime
 
-app = FastAPI(title="🏥 API de Gestión Hospitalaria")
+st.set_page_config(page_title="API Financiera - Simulación", layout="centered")
 
-# CORS (permite uso desde otros dominios si se conecta frontend)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Cargar y limpiar datos
-df = pd.read_excel("data/healthcare_dataset.xlsx", engine='openpyxl')
-df.columns = df.columns.str.strip()
-df["Date of Admission"] = pd.to_datetime(
-    df["Date of Admission"], dayfirst=True, errors='coerce')
-df["Discharge Date"] = pd.to_datetime(
-    df["Discharge Date"], dayfirst=True, errors='coerce')
-
-# Endpoints
+# --- Cargar datos ---
 
 
-@app.get("/")
-def index():
-    return {"message": "API de Indicadores de Salud — Bienvenido"}
+@st.cache_data
+def load_data():
+    df = pd.read_excel("data/healthcare_dataset.xlsx", engine="openpyxl")
+    df.columns = [c.strip() for c in df.columns]
+    df["Date of Admission"] = pd.to_datetime(
+        df["Date of Admission"], dayfirst=True, errors="coerce")
+    df["Discharge Date"] = pd.to_datetime(
+        df["Discharge Date"], dayfirst=True, errors="coerce")
+    df["Length of Stay"] = (df["Discharge Date"] -
+                            df["Date of Admission"]).dt.days
+    return df
 
 
-@app.get("/patients/")
-def all_patients(limit: int = 10):
-    return df.head(limit).to_dict(orient="records")
+df = load_data()
 
+st.title("📊 API de Datos Financieros (Simulación con Streamlit)")
+st.markdown(
+    "Consulta de indicadores financieros hospitalarios a partir del dataset clínico.")
 
-@app.get("/conditions/{condition}")
-def get_by_condition(condition: str):
-    filtered = df[df["Medical Condition"].str.contains(
-        condition, case=False, na=False)]
-    return filtered.to_dict(orient="records")
+# --- Filtros simulando parámetros API ---
+col1, col2 = st.columns(2)
 
+with col1:
+    hospital = st.selectbox(
+        "🏥 Hospital", ["Todos"] + sorted(df["Hospital"].dropna().unique().tolist()))
+with col2:
+    insurance = st.selectbox("🏦 Aseguradora", [
+                             "Todos"] + sorted(df["Insurance Provider"].dropna().unique().tolist()))
 
-@app.get("/medications/")
-def medications_summary():
-    return df["Medication"].value_counts().to_dict()
+# --- Lógica "API" ---
+filtered_df = df.copy()
+if hospital != "Todos":
+    filtered_df = filtered_df[filtered_df["Hospital"] == hospital]
+if insurance != "Todos":
+    filtered_df = filtered_df[filtered_df["Insurance Provider"] == insurance]
 
+total_pacientes = len(filtered_df)
+total_facturado = filtered_df["Billing Amount"].sum()
+promedio_facturacion = filtered_df["Billing Amount"].mean()
+promedio_estancia = filtered_df["Length of Stay"].mean()
 
-@app.get("/admissions/stats")
-def admission_stats():
-    avg_stay = (df["Discharge Date"] - df["Date of Admission"]).dt.days.mean()
-    return {
-        "total_admissions": len(df),
-        "avg_stay_days": round(avg_stay, 2),
-        "avg_billing_amount": round(df["Billing Amount"].mean(), 2)
+# --- Simulación de respuesta API JSON ---
+st.subheader("📦 Respuesta simulada del endpoint `/metrics`")
+
+st.json({
+    "filtros": {
+        "hospital": hospital if hospital != "Todos" else None,
+        "aseguradora": insurance if insurance != "Todos" else None
+    },
+    "resultados": {
+        "total_pacientes": total_pacientes,
+        "total_facturado": round(total_facturado, 2),
+        "promedio_facturacion": round(promedio_facturacion, 2),
+        "promedio_estancia_dias": round(promedio_estancia, 1)
     }
+})
 
-
-@app.get("/billing/by_insurance")
-def billing_by_insurance():
-    billing = df.groupby("Insurance Provider")[
-        "Billing Amount"].mean().sort_values(ascending=False)
-    return billing.round(2).to_dict()
+# --- Mostrar tabla filtrada si el usuario quiere ---
+with st.expander("📋 Ver datos filtrados"):
+    st.dataframe(filtered_df)
